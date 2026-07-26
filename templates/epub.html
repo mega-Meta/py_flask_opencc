@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ePub 簡轉繁工具 (純前端版)</title>
+    <!-- 引入前端解壓縮元件 JSZip -->
+    <script src="https://cloudflare.com"></script>
+    <!-- 引入 OpenCC JavaScript 繁簡轉換庫 -->
+    <script src="https://jsdelivr.net"></script>
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            text-align: center; 
+            padding-top: 50px; 
+            background: #f5f5f7; 
+            color: #333;
+        }
+        .container { 
+            background: white; 
+            padding: 40px; 
+            border-radius: 12px; 
+            display: inline-block; 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1); 
+            max-width: 450px;
+            width: 90%;
+        }
+        h2 { margin-top: 0; color: #1d1d1f; }
+        p { color: #6e6e73; font-size: 14px; }
+        .file-box {
+            border: 2px dashed #d2d2d7;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            background: #fafafa;
+        }
+        input[type="file"] { display: none; }
+        .file-label {
+            background: #e8e8ed;
+            color: #1d1d1f;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        .file-label:hover { background: #d2d2d7; }
+        #file-name { margin-top: 12px; font-size: 14px; color: #0071e3; word-break: break-all; }
+        button { 
+            background: #0071e3; 
+            color: white; 
+            border: none; 
+            padding: 12px 24px; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 16px;
+            font-weight: bold;
+            width: 100%;
+            margin-top: 10px;
+        }
+        button:hover { background: #0077ed; }
+        button:disabled { background: #aeaeb2; cursor: not-allowed; }
+        #status { 
+            margin-top: 20px; 
+            font-weight: bold; 
+            color: #0071e3; 
+            min-height: 24px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>ePub 電子書簡轉繁 (OpenCC)</h2>
+        <p>所有轉換皆在本機瀏覽器完成，不會上傳任何隱私檔案。</p>
+        
+        <div class="file-box">
+            <label for="epub_file" class="file-label">選擇 ePub 檔案</label>
+            <input type="file" id="epub_file" accept=".epub">
+            <div id="file-name">尚未選擇檔案</div>
+        </div>
+
+        <button id="convert_btn" disabled>開始轉換並下載</button>
+        <div id="status"></div>
+    </div>
+
+    <script>
+        // 初始化 OpenCC 簡體到台灣繁體（包含台灣習慣用語轉換 s2twp）
+        const converter = OpenCC.Converter({ from: 's2', to: 'twp' });
+
+        const fileInput = document.getElementById('epub_file');
+        const fileNameDiv = document.getElementById('file-name');
+        const convertBtn = document.getElementById('convert_btn');
+        const statusDiv = document.getElementById('status');
+
+        let selectedFile = null;
+
+        // 當使用者選擇檔案時
+        fileInput.addEventListener('change', function(e) {
+            selectedFile = e.target.files[0];
+            if (selectedFile) {
+                fileNameDiv.textContent = selectedFile.name;
+                convertBtn.disabled = false;
+                statusDiv.textContent = "";
+            } else {
+                fileNameDiv.textContent = "尚未選擇檔案";
+                convertBtn.disabled = true;
+            }
+        });
+
+        // 點擊轉換按鈕時的邏輯
+        convertBtn.addEventListener('click', async function() {
+            if (!selectedFile) return;
+
+            convertBtn.disabled = true;
+            statusDiv.textContent = "正在讀取並解壓縮 ePub...";
+
+            try {
+                const zip = new JSZip();
+                // 載入 ePub 二進位資料
+                const loadedZip = await zip.loadAsync(selectedFile);
+                const files = Object.keys(loadedZip.files);
+                let processCount = 0;
+
+                statusDiv.textContent = `開始轉換文字 (共 ${files.length} 個結構檔案)...`;
+
+                // 遍歷壓縮檔內所有檔案
+                for (const filename of files) {
+                    const currentFile = loadedZip.files[filename];
+                    
+                    // 只針對文字/結構檔案進行簡轉繁（比照 Python 邏輯）
+                    if (!currentFile.dir && (
+                        filename.endsWith('.html') || 
+                        filename.endsWith('.xhtml') || 
+                        filename.endsWith('.ncx') || 
+                        filename.endsWith('.opf') || 
+                        filename.endsWith('.txt')
+                    )) {
+                        // 讀取文字內容
+                        const originalText = await currentFile.async("text");
+                        // 使用 OpenCC 進行台灣正體用詞轉換
+                        const convertedText = converter(originalText);
+                        // 將轉換後的內容塞回 zip
+                        zip.file(filename, convertedText);
+                    }
+                }
+
+                statusDiv.textContent = "正在封裝成新的 ePub...";
+                // 壓縮打包成全新的 Blob 物件
+                const contentBlob = await zip.generateAsync({ type: "blob", compression: "DEFLATED" });
+
+                // 生成符合原本 python 邏輯的繁體檔名
+                let downloadName = selectedFile.name
+                    .replace("_zh.", ".")
+                    .replace(/-1\.epub$/i, ".epub")
+                    .replace(" (z-library.sk, 1lib.sk, z-lib.sk)", "")
+                    .replace(/\.epub$/i, "_zh.epub");
+                
+                // 檔名本身也做簡轉繁
+                downloadName = converter(downloadName);
+
+                statusDiv.textContent = "轉換完成！開始下載...";
+
+                // 觸發瀏覽器下載行為
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(contentBlob);
+                link.download = downloadName;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                statusDiv.textContent = "下載成功！";
+            } catch (error) {
+                console.error(error);
+                statusDiv.textContent = "轉換失敗，請檢查檔案是否損壞。";
+            } finally {
+                convertBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

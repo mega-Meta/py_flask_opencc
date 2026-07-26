@@ -1,0 +1,11 @@
+
+{% extends "layout.html" %}
+
+{% block body %}
+
+    <form action="/epub" method="post">
+        <input autocomplete="off" autofocus name="name" placeholder="名字" type="text">
+        <button type="submit">問候</button>
+    </form>
+
+{% endblock %}
